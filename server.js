@@ -298,7 +298,7 @@ Evaluate this prompt. Is it effective? Give 1 pro and 1 con in a friendly, encou
       feedback: feedback 
     });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error("Gemini API Error:", error);
     
     if (error.statusCode === 401) {
