@@ -60,13 +60,13 @@ app.post("/signup", async (req, res) => {
 app.post("/user-login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    db.query("SELECT * FROM user_register WHERE email=?", [email], async (err, rows) => {
+db.query("SELECT *, COALESCE(role, 'user') as role FROM user_register WHERE email=?", [email], async (err, rows) => {
       if (err) return res.status(500).json({ success: false });
       if (rows.length === 0) return res.status(401).json({ success: false, message: "User not found" });
       const user = rows[0];
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });
-      const token = jwt.sign({ id: user.userid, email: user.email }, process.env.JWT_SECRET, { expiresIn: "1d" });
+const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
       db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, purchaseRows) => {
         const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
         const courseData = purchaseRows[0] || null;
@@ -83,7 +83,7 @@ app.post("/user-login", async (req, res) => {
           res.json({
             success: true,
             token,
-            user: { id: user.userid, fullName: user.full_name, email: user.email },
+            user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
             purchased,
             progress,
             payment_verified: courseData?.payment_verified || "NO Payment",
@@ -114,6 +114,16 @@ const verifyToken = (req, res, next) => {
     console.error("❌ Token verification failed:", err.message);
     res.status(401).json({ error: "Invalid token" });
   }
+};
+
+const verifyAdmin = (req, res, next) => {
+  verifyToken(req, res, (err) => {
+    if (err) return;
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  });
 };
 
 app.get("/my-course-status", verifyToken, (req, res) => {
@@ -325,7 +335,11 @@ app.post("/verify-otp", async (req, res) => {
 
 videomodel.createVideoTable();
 
-app.post("/store-video", async (req, res) => {
+app.get("/admin-status", verifyToken, (req, res) => {
+  res.json({ isAdmin: req.user.role === 'admin' });
+});
+
+app.post("/store-video", verifyAdmin, async (req, res) => {
   try {
     const { title, video } = req.body;
     if (!title || !video) return res.status(400).json({ error: "Title and video URL required" });
@@ -569,7 +583,13 @@ const seedCourses = () => {
   ];
   courses.forEach(course => {
     db.query("SELECT id FROM courses WHERE course_name = ?", [course.name], (err, result) => {
-      if (result.length === 0) db.query("INSERT INTO courses (course_name, amount, duration) VALUES (?, ?, ?)", [course.name, course.amount, course.duration]);
+      if (err) {
+        console.error('Error checking course:', err);
+        return;
+      }
+      if (!result || result.length === 0) {
+        db.query("INSERT INTO courses (course_name, amount, duration) VALUES (?, ?, ?)", [course.name, course.amount, course.duration]);
+      }
     });
   });
 };

@@ -2,11 +2,12 @@ const db=require("./test-db");
 
 const createregisterTable=()=>{
     const sql = 
-    `CREATE TABLE IF NOT EXISTS user_register(
+`CREATE TABLE IF NOT EXISTS user_register(
      userid INT AUTO_INCREMENT PRIMARY KEY,
      full_name VARCHAR(255), 
      email VARCHAR(255) UNIQUE ,
      password VARCHAR(255),
+     role ENUM('user', 'admin') DEFAULT 'user',
      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`
 
@@ -30,11 +31,7 @@ const createNewUser = (userData) => {
 
     db.query(
       sql,
-      [
-        userData.fullName,
-        userData.email,
-        userData.password,
-      ],
+[userData.fullName, userData.email, userData.password],
       (err, result) => {
         if (err) reject(err);
         else resolve(result);

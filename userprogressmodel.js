@@ -1,5 +1,16 @@
 const db = require("./test-db");
 
+const safeParse = (value, fallback = []) => {
+  try {
+    if (Array.isArray(value) || (typeof value === "object" && value !== null)) {
+      return value;
+    }
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
 const createuserprogress = () => {
   const sql = `
     CREATE TABLE IF NOT EXISTS user_progress(
@@ -26,55 +37,18 @@ const saveProgress = (email, progress, cb) => {
   getProgress(email, (err, existingRows) => {
     if (err) return cb(err);
 
-    // ✅ SAFE PARSE EXISTING LEVELS
-    let existingCompleted = [];
-    if (existingRows && existingRows.length > 0) {
-      const data = existingRows[0].completedLevels;
-
-      if (Array.isArray(data)) {
-        existingCompleted = data;
-      } else {
-        try {
-          existingCompleted = JSON.parse(data || "[]");
-        } catch (e) {
-          existingCompleted = [];
-        }
-      }
-    }
-
-    // ✅ PREREQUISITES MAP
-    const prerequisites = {
-      "content-writing": "beginner",
-      "marketing": "beginner",
-      "coding": "beginner",
-      "data-analysis": "beginner",
-      "education": "beginner",
-      "business": "beginner",
-      "fashion": "beginner",
-      "health": "beginner",
-
-      "advanced-content-writing": "content-writing",
-      "advanced-marketing": "marketing",
-      "advanced-coding": "coding",
-      "advanced-data-analysis": "data-analysis",
-      "advanced-education": "education",
-      "advanced-business": "business",
-      "advanced-fashion": "fashion",
-      "advanced-health": "health"
-    };
+    const existingRow = existingRows && existingRows.length > 0 ? existingRows[0] : null;
+    const existingCompleted = safeParse(existingRow?.completedLevels || "[]");
+    const existingCertifications = safeParse(existingRow?.certifications || "[]");
 
     const newLevels = progress.completedLevels || [];
 
-    // ✅ ACCEPT ALL LEVELS - No prerequisite blocking
-    // Frontend handles auto-unlock logic, backend just stores
     const validNewLevels = newLevels.filter((levelId) => levelId);
 
-    // ✅ MERGE + REMOVE DUPLICATES
     const mergedCompleted = [
       ...new Set([...existingCompleted, ...validNewLevels])
     ];
 
-    // ✅ CERTIFICATION MAP (OLD FORMAT - Object with id, levelName, date, learnerName)
     const certificationLabelMap = {
       beginner: "Beginner Prompting",
       "content-writing": "Content Writing Domain",
@@ -96,32 +70,42 @@ const saveProgress = (email, progress, cb) => {
       "advanced-health": "Advanced Health"
     };
 
-    // ✅ GENERATE CERTIFICATIONS (Object Format - Old Style)
     const today = new Date();
     const dateStr = String(today.getDate()).padStart(2, "0") + "/" + 
                     String(today.getMonth() + 1).padStart(2, "0") + "/" + 
                     today.getFullYear();
 
-    const earnedCertifications = mergedCompleted.map((level) => {
-      if (!certificationLabelMap[level]) return null;
-      return {
+    const fallbackLearnerName = progress.learnerName || existingRow?.learnerName || "Learner";
+    const certificationsById = {};
+
+    existingCertifications.forEach((cert) => {
+      if (cert && typeof cert === "object" && cert.id) {
+        certificationsById[cert.id] = cert;
+      }
+    });
+
+    (progress.certifications || []).forEach((cert) => {
+      if (cert && typeof cert === "object" && cert.id) {
+        certificationsById[cert.id] = {
+          ...certificationsById[cert.id],
+          ...cert,
+          learnerName: cert.learnerName || certificationsById[cert.id]?.learnerName || fallbackLearnerName
+        };
+      }
+    });
+
+    mergedCompleted.forEach((level) => {
+      if (!certificationLabelMap[level] || certificationsById[level]) return;
+      certificationsById[level] = {
         id: level,
         levelName: certificationLabelMap[level],
         date: dateStr,
-        learnerName: progress.learnerName || "Learner"
+        learnerName: fallbackLearnerName
       };
-    }).filter(Boolean);
-
-    // Remove duplicates (by id)
-    const unique = {};
-    earnedCertifications.forEach(cert => {
-      if (!unique[cert.id]) {
-        unique[cert.id] = cert;
-      }
     });
-    const uniqueCertifications = Object.values(unique);
 
-    // ✅ QUERY
+    const uniqueCertifications = Object.values(certificationsById);
+
     const query = `
       INSERT INTO user_progress 
       (email, completedLevels, currentLevelId, certifications)
