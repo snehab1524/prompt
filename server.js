@@ -350,29 +350,48 @@ const otpStore = {};
 
 app.post("/send-otp", async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, phone } = req.body;
     if (!email || !fullName || !password) return res.status(400).json({ message: "All fields required" });
     const otp = Math.floor(100000 + Math.random() * 900000);
     otpStore[email] = { otp, expires: Date.now() + 2 * 60 * 1000, userData: { fullName, email, password } };
     
-    // Send email OTP (non-blocking for demo)
+    let deliveryStatus = 'unknown';
+    
+    // Try email first
     try {
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: email,
-        subject: "Email Verification OTP",
-        text: `Your OTP is ${otp}. It is valid for 2 minutes.`
+        subject: "AIINSIGHT OTP",
+        text: `Your OTP: ${otp}`,
+        html: `<h1>${otp}</h1>`
       });
-      console.log(`OTP email sent to ${email}`);
+      console.log(`✅ EMAIL: ${otp} to ${email}`);
+      deliveryStatus = 'email';
     } catch (emailErr) {
-      console.error(`Failed to send OTP email to ${email}:`, emailErr.message);
-      // Still proceed - OTP in memory for verify
+      console.error(`❌ EMAIL FAILED: ${emailErr.message}`);
     }
     
-    res.json({ message: "OTP sent successfully" });
+    // Fallback to SMS if phone provided and Twilio creds exist
+    if (phone && process.env.TWILIO_SID) {
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
+        await client.messages.create({
+          body: `AIINSIGHT OTP: ${otp}`,
+          from: process.env.TWILIO_PHONE,
+          to: phone
+        });
+        console.log(`✅ SMS: ${otp} to ${phone}`);
+        deliveryStatus = 'sms';
+      } catch (smsErr) {
+        console.error(`❌ SMS FAILED: ${smsErr.message}`);
+      }
+    }
+    
+    res.json({ message: "OTP ready (check logs)", delivery: deliveryStatus, otpForTest: otp });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to send OTP" });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
