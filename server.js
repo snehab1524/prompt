@@ -256,6 +256,70 @@ app.post("/get-progress", verifyToken, (req, res) => {
   });
 });
 
+// NEW: Secure Gemini AI Feedback Proxy (Fixes client-side API key exposure)
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+app.post("/api/ai-feedback", verifyToken, async (req, res) => {
+  try {
+    const { userPrompt, task, model = 'gemini-1.5-flash' } = req.body;
+    
+    if (!userPrompt || !task) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: userPrompt and task' 
+      });
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const aiModel = genAI.getGenerativeModel({ model });
+
+    const fullPrompt = `User is learning Prompt Engineering. 
+Task: ${task}
+User's Attempt: "${userPrompt}"
+Evaluate this prompt. Is it effective? Give 1 pro and 1 con in a friendly, encouraging way (max 50 words).`;
+
+    const result = await aiModel.generateContent({
+      contents: [{ 
+        role: 'user', 
+        parts: [{ text: fullPrompt }] 
+      }],
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 100,
+      },
+      systemInstruction: "You are a professional Prompt Engineering Coach. Be concise, encouraging, and educational."
+    });
+
+    const feedback = result.response.text();
+
+    res.json({ 
+      success: true, 
+      feedback: feedback 
+    });
+
+  } catch (error: any) {
+    console.error("Gemini API Error:", error);
+    
+    if (error.statusCode === 401) {
+      return res.status(401).json({ 
+        error: 'AI service authentication failed. Please contact support.' 
+      });
+    }
+    
+    if (error.statusCode === 429) {
+      return res.status(429).json({ 
+        error: 'AI service rate limited. Please try again shortly.' 
+      });
+    }
+
+    res.status(500).json({ 
+      error: 'AI feedback service temporarily unavailable. Please try again.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 app.get("/test", (req, res) => {
   res.json({ message: "Backend is working", timestamp: new Date().toISOString() });
 });
