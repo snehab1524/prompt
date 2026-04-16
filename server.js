@@ -17,11 +17,17 @@ const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
-  }
+  },
+  tls: {
+    rejectUnauthorized: false
+  },
+  connectionTimeout: 10000
 });
 
 const app = express();
@@ -355,17 +361,26 @@ app.post("/send-otp", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000);
     otpStore[email] = { otp, expires: Date.now() + 2 * 60 * 1000, userData: { fullName, email, password } };
     
-    let deliveryStatus = 'unknown';
+  if (deliveryStatus !== 'email') {
+  return res.status(500).json({
+    message: "OTP sending failed. Try again."
+  });
+}
     
     // Try email first
     try {
       await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: "AIINSIGHT OTP",
-        text: `Your OTP: ${otp}`,
-        html: `<h1>${otp}</h1>`
-      });
+  from: `"AIInsight" <${process.env.EMAIL_USER}>`,
+  to: email,
+  subject: "Verification Code - AIInsight",
+  text: `Your secure OTP is ${otp}. Do not share it.`,
+  html: `<h2>Your OTP is: ${otp}</h2>`,
+  headers: {
+    "X-Priority": "1",
+    "X-MSMail-Priority": "High",
+    Importance: "high"
+  }
+});
       console.log(`✅ EMAIL: ${otp} to ${email}`);
       deliveryStatus = 'email';
     } catch (emailErr) {
