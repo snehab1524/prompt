@@ -65,10 +65,21 @@ app.post("/signup", async (req, res) => {
   }
 });
 
+// 🔥 Safe JSON parser (NO CRASH)
+const safeParse = (data) => {
+  try {
+    if (!data || data === "") return [];
+    return typeof data === "string" ? JSON.parse(data) : data;
+  } catch {
+    return [];
+  }
+};
+
 app.post("/user-login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // 🔹 Promise wrapper for DB
     const queryDB = (sql, values) =>
       new Promise((resolve, reject) => {
         db.query(sql, values, (err, result) => {
@@ -77,7 +88,7 @@ app.post("/user-login", async (req, res) => {
         });
       });
 
-    // 🔥 1. CHECK CACHE FIRST
+    // 🔥 1. CACHE CHECK
     let user = userCache.get(email);
 
     if (!user) {
@@ -86,18 +97,23 @@ app.post("/user-login", async (req, res) => {
         [email]
       );
 
-      if (rows.length === 0) {
+      if (!rows || rows.length === 0) {
         return res.status(401).json({ success: false, message: "User not found" });
       }
 
       user = rows[0];
 
-      // 🔥 store in cache
+      // store in cache
       userCache.set(email, user);
     }
 
     // 🔥 2. PASSWORD CHECK
+    if (!user.password) {
+      return res.status(500).json({ success: false, message: "Password missing in DB" });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
+
     if (!isMatch) {
       return res.status(401).json({ success: false, message: "Wrong password" });
     }
@@ -105,11 +121,11 @@ app.post("/user-login", async (req, res) => {
     // 🔥 3. TOKEN
     const token = jwt.sign(
       { id: user.userid, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || "secret123", // fallback safety
       { expiresIn: "1d" }
     );
 
-    // 🔥 4. PARALLEL QUICK DATA FETCH
+    // 🔥 4. PARALLEL DATA FETCH (FAST)
     const [purchaseRows, progressRows] = await Promise.all([
       queryDB(
         "SELECT payment_verified, courseName, selected_domain FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1",
@@ -121,21 +137,17 @@ app.post("/user-login", async (req, res) => {
       )
     ]);
 
-    const courseData = purchaseRows[0] || {};
-    const progressRow = progressRows[0] || {};
+    // 🔥 5. SAFE DATA HANDLING
+    const courseData = (purchaseRows && purchaseRows[0]) ? purchaseRows[0] : {};
+    const progressRow = (progressRows && progressRows[0]) ? progressRows[0] : {};
 
-    // 🔥 5. SAFE PARSE (FAST)
     const progress = {
-      completedLevels: progressRow.completedLevels
-        ? JSON.parse(progressRow.completedLevels)
-        : [],
+      completedLevels: safeParse(progressRow.completedLevels),
       currentLevelId: progressRow.currentLevelId || "beginner",
-      certifications: progressRow.certifications
-        ? JSON.parse(progressRow.certifications)
-        : []
+      certifications: safeParse(progressRow.certifications)
     };
 
-    // 🔥 6. FINAL RESPONSE
+    // 🔥 6. FINAL RESPONSE (same as your original)
     res.json({
       success: true,
       token,
@@ -153,8 +165,11 @@ app.post("/user-login", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ success: false });
+    console.error("🔥 LOGIN ERROR:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 });
 

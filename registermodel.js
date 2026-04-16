@@ -9,10 +9,7 @@ const createregisterTable = () => {
       email VARCHAR(255) UNIQUE,
       password VARCHAR(255),
       role ENUM('user', 'admin') DEFAULT 'user',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-      -- 🔥 INDEX for ultra fast login
-      INDEX idx_email (email)
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `;
 
@@ -20,7 +17,19 @@ const createregisterTable = () => {
     if (err) {
       console.log("❌ Table creation error:", err);
     } else {
-      console.log("✅ user_register table ready (optimized)");
+      console.log("✅ user_register table ready");
+      
+      // 🔥 Create index separately (SAFE WAY)
+      db.query(
+        "CREATE INDEX IF NOT EXISTS idx_email ON user_register(email)",
+        (err) => {
+          if (err) {
+            console.log("⚠️ Index creation issue:", err.message);
+          } else {
+            console.log("⚡ Email index ready");
+          }
+        }
+      );
     }
   });
 };
@@ -28,6 +37,12 @@ const createregisterTable = () => {
 /* ========= INSERT USER ========= */
 const createNewUser = (userData) => {
   return new Promise((resolve, reject) => {
+
+    // 🔥 Validation (IMPORTANT)
+    if (!userData.fullName || !userData.email || !userData.password) {
+      return reject(new Error("All fields are required"));
+    }
+
     const sql = `
       INSERT INTO user_register (full_name, email, password)
       VALUES (?, ?, ?)
@@ -38,15 +53,16 @@ const createNewUser = (userData) => {
       [userData.fullName, userData.email, userData.password],
       (err, result) => {
         if (err) {
-          // 🔥 Handle duplicate email properly
           if (err.code === "ER_DUP_ENTRY") {
             return reject(new Error("Email already registered"));
           }
+          console.error("❌ Insert error:", err);
           return reject(err);
         }
 
         resolve({
           userId: result.insertId,
+          fullName: userData.fullName,
           email: userData.email
         });
       }
