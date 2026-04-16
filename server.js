@@ -434,21 +434,65 @@ app.post("/send-otp", async (req, res) => {
 app.post("/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
+    
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP required" });
+    }
+    
+    console.log(`🔍 VERIFY OTP: ${otp} for ${email}`);
+    
     const record = otpStore[email];
-    if (!record) return res.status(400).json({ message: "No OTP found" });
+    if (!record) {
+      console.log(`❌ No OTP record for ${email}`);
+      return res.status(400).json({ message: "No OTP found" });
+    }
+    
     if (Date.now() > record.expires) {
+      console.log(`❌ OTP expired for ${email}`);
       delete otpStore[email];
       return res.status(400).json({ message: "OTP expired" });
     }
-    if (record.otp != otp) return res.status(400).json({ message: "Invalid OTP" });
+    
+    if (parseInt(record.otp) !== parseInt(otp)) {
+      console.log(`❌ Invalid OTP: expected ${record.otp}, got ${otp}`);
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+    
     const { fullName, password } = record.userData;
     const hashpassword = await bcrypt.hash(password, 15);
-    const newUser = await userRegister.createNewUser({ fullName, email, password: hashpassword });
-    delete otpStore[email];
-    res.status(201).json({ success: true, message: "User registered successfully ✅", data: newUser });
+    
+    // Check if user already exists (avoid UNIQUE constraint)
+    db.query("SELECT userid FROM user_register WHERE email = ?", [email], async (err, rows) => {
+      if (err) {
+        console.error("DB check error:", err);
+        return res.status(500).json({ message: "Database error" });
+      }
+      
+      if (rows.length > 0) {
+        console.log(`👤 User ${email} already exists`);
+        delete otpStore[email];
+        return res.status(409).json({ message: "User already registered" });
+      }
+      
+      try {
+        const newUser = await userRegister.createNewUser({ fullName, email, password: hashpassword });
+        delete otpStore[email];
+        console.log(`✅ User registered: ${email}`);
+        res.status(201).json({ success: true, message: "User registered successfully ✅", data: newUser });
+      } catch (dbErr) {
+        console.error("Registration DB error:", dbErr);
+        // Handle UNIQUE constraint specifically
+        if (dbErr.code === 'ER_DUP_ENTRY') {
+          delete otpStore[email];
+          return res.status(409).json({ message: "Email already registered" });
+        }
+        res.status(500).json({ message: "Registration failed", details: process.env.NODE_ENV === 'development' ? dbErr.message : undefined });
+      }
+    });
+    
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Registration failed" });
+    console.error("Verify-OTP error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
