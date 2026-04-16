@@ -7,7 +7,7 @@ async function createAdmin() {
 const adminData = {
       fullName: 'Admin User',
       email: 'admin@aiinsight.com',
-      password: await bcrypt.hash('admin123', 15),
+      password: await bcrypt.hash('admin123', 10),
       role: 'admin'
     };
 

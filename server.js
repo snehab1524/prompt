@@ -56,7 +56,7 @@ userRegister.createregisterTable();
 app.post("/signup", async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
-    const hashpassword = await bcrypt.hash(password, 15);
+    const hashpassword = await bcrypt.hash(password, 10);
     const newUser = await userRegister.createNewUser({ fullName, email, password: hashpassword });
     res.status(201).json({ success: true, message: "User registered successfully ✅", data: newUser });
   } catch (err) {
@@ -508,7 +508,7 @@ app.post("/verify-otp", async (req, res) => {
     }
     
     const { fullName, password } = record.userData;
-    const hashpassword = await bcrypt.hash(password, 15);
+    const hashpassword = await bcrypt.hash(password, 10);
     
     // Check if user already exists (avoid UNIQUE constraint)
     db.query("SELECT userid FROM user_register WHERE email = ?", [email], async (err, rows) => {
