@@ -357,34 +357,47 @@ const otpStore = {};
 app.post("/send-otp", async (req, res) => {
   try {
     const { fullName, email, password, phone } = req.body;
-    if (!email || !fullName || !password) return res.status(400).json({ message: "All fields required" });
-    const otp = Math.floor(100000 + Math.random() * 900000);
-    otpStore[email] = { otp, expires: Date.now() + 2 * 60 * 1000, userData: { fullName, email, password } };
     
-  if (deliveryStatus !== 'email') {
-  return res.status(500).json({
-    message: "OTP sending failed. Try again."
-  });
-}
+    // Basic email validation (works for all domains)
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Invalid email format" });
+    }
+    
+    if (!email || !fullName || !password) {
+      return res.status(400).json({ message: "All fields required" });
+    }
+    
+    const otp = Math.floor(100000 + Math.random() * 900000);
+    otpStore[email] = { 
+      otp, 
+      expires: Date.now() + 2 * 60 * 1000, 
+      userData: { fullName, email, password } 
+    };
+    
+    console.log(`🔑 OTP GENERATED: ${otp} for ${email} (expires: ${new Date(otpStore[email].expires).toISOString()})`);
+    
+    let deliveryStatus = 'stored'; // Always succeed: OTP ready in store
     
     // Try email first
     try {
       await transporter.sendMail({
-  from: `"AIInsight" <${process.env.EMAIL_USER}>`,
-  to: email,
-  subject: "Verification Code - AIInsight",
-  text: `Your secure OTP is ${otp}. Do not share it.`,
-  html: `<h2>Your OTP is: ${otp}</h2>`,
-  headers: {
-    "X-Priority": "1",
-    "X-MSMail-Priority": "High",
-    Importance: "high"
-  }
-});
+        from: `"AIInsight" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Verification Code - AIInsight",
+        text: `Your secure OTP is ${otp}. Do not share it.`,
+        html: `<h2>Your OTP is: ${otp}</h2>`,
+        headers: {
+          "X-Priority": "1",
+          "X-MSMail-Priority": "High",
+          Importance: "high"
+        }
+      });
       console.log(`✅ EMAIL: ${otp} to ${email}`);
       deliveryStatus = 'email';
     } catch (emailErr) {
-      console.error(`❌ EMAIL FAILED: ${emailErr.message}`);
+      console.error(`❌ EMAIL FAILED to ${email}: ${emailErr.message}`);
+      // Continue - OTP still valid via verify-otp
     }
     
     // Fallback to SMS if phone provided and Twilio creds exist
@@ -400,13 +413,21 @@ app.post("/send-otp", async (req, res) => {
         console.log(`✅ SMS: ${otp} to ${phone}`);
         deliveryStatus = 'sms';
       } catch (smsErr) {
-        console.error(`❌ SMS FAILED: ${smsErr.message}`);
+        console.error(`❌ SMS FAILED to ${phone}: ${smsErr.message}`);
       }
     }
     
-    res.json({ message: "OTP ready (check logs)", delivery: deliveryStatus, otpForTest: otp });
+    // Success: OTP always stored, delivery best-effort
+    res.json({ 
+      message: "OTP generated successfully", 
+      delivery: deliveryStatus,
+      // Remove otpForTest for production security
+      ...(process.env.NODE_ENV === 'development' && { otpForTest: otp })
+    });
+    
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Send-OTP error:", err);
+    res.status(500).json({ message: "Server error", details: process.env.NODE_ENV === 'development' ? err.message : undefined });
   }
 });
 
