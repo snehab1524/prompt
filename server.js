@@ -4,6 +4,8 @@ const cors = require("cors");
 const Razorpay = require("razorpay");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
+const NodeCache = require("node-cache");
+const userCache = new NodeCache({ stdTTL: 300 }); // 5 min cache
 
 const usermodel = require("./model")
 const userprogress = require("./userprogressmodel");
@@ -66,45 +68,92 @@ app.post("/signup", async (req, res) => {
 app.post("/user-login", async (req, res) => {
   try {
     const { email, password } = req.body;
-db.query("SELECT *, COALESCE(role, 'user') as role FROM user_register WHERE email=?", [email], async (err, rows) => {
-      if (err) return res.status(500).json({ success: false });
-      if (rows.length === 0) return res.status(401).json({ success: false, message: "User not found" });
-      const user = rows[0];
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });
-const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
-      db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, purchaseRows) => {
-        const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
-        const courseData = purchaseRows[0] || null;
-        db.query("SELECT * FROM user_progress WHERE email = ?", [email], (err, progressRows) => {
-          let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };
-          if (progressRows && progressRows.length > 0) {
-            const row = progressRows[0];
-            progress = {
-              completedLevels: typeof row.completedLevels === "string" ? JSON.parse(row.completedLevels) : row.completedLevels || [],
-              currentLevelId: row.currentLevelId || "beginner",
-              certifications: typeof row.certifications === "string" ? JSON.parse(row.certifications) : row.certifications || []
-            };
-          }
-          res.json({
-            success: true,
-            token,
-            user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
-            purchased,
-            progress,
-            payment_verified: courseData?.payment_verified || "NO Payment",
-            courseName: courseData?.courseName || null,
-            selectedDomain: courseData?.selected_domain || null,
-            courseexpairy: courseData?.courseexpairy || null,
-            duration: courseData?.duration || null,
-            phone: courseData?.phone || null,
-            citizen: courseData?.citizen || null
-          });
+
+    const queryDB = (sql, values) =>
+      new Promise((resolve, reject) => {
+        db.query(sql, values, (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
         });
       });
+
+    // 🔥 1. CHECK CACHE FIRST
+    let user = userCache.get(email);
+
+    if (!user) {
+      const rows = await queryDB(
+        "SELECT userid, full_name, email, password, COALESCE(role,'user') as role FROM user_register WHERE email=?",
+        [email]
+      );
+
+      if (rows.length === 0) {
+        return res.status(401).json({ success: false, message: "User not found" });
+      }
+
+      user = rows[0];
+
+      // 🔥 store in cache
+      userCache.set(email, user);
+    }
+
+    // 🔥 2. PASSWORD CHECK
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: "Wrong password" });
+    }
+
+    // 🔥 3. TOKEN
+    const token = jwt.sign(
+      { id: user.userid, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    // 🔥 4. PARALLEL QUICK DATA FETCH
+    const [purchaseRows, progressRows] = await Promise.all([
+      queryDB(
+        "SELECT payment_verified, courseName, selected_domain FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1",
+        [email]
+      ),
+      queryDB(
+        "SELECT completedLevels, currentLevelId, certifications FROM user_progress WHERE email=?",
+        [email]
+      )
+    ]);
+
+    const courseData = purchaseRows[0] || {};
+    const progressRow = progressRows[0] || {};
+
+    // 🔥 5. SAFE PARSE (FAST)
+    const progress = {
+      completedLevels: progressRow.completedLevels
+        ? JSON.parse(progressRow.completedLevels)
+        : [],
+      currentLevelId: progressRow.currentLevelId || "beginner",
+      certifications: progressRow.certifications
+        ? JSON.parse(progressRow.certifications)
+        : []
+    };
+
+    // 🔥 6. FINAL RESPONSE
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.userid,
+        fullName: user.full_name,
+        email: user.email,
+        role: user.role
+      },
+      purchased: courseData.payment_verified === "Payment Done",
+      progress,
+      payment_verified: courseData.payment_verified || "NO Payment",
+      courseName: courseData.courseName || null,
+      selectedDomain: courseData.selected_domain || null
     });
+
   } catch (err) {
-    console.error(err);
+    console.error("Login error:", err);
     res.status(500).json({ success: false });
   }
 });
