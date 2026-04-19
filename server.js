@@ -4,6 +4,7 @@ const cors = require("cors");
 const Razorpay = require("razorpay");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
+const PORT = process.env.PORT || 7000;
 
 const usermodel = require("./model")
 const userprogress = require("./userprogressmodel");
@@ -719,7 +720,11 @@ const seedCourses = () => {
 };
 seedCourses();
 
-app.listen(7000, () => console.log("🔥 Backend running on port 7000 🔥"));
 
-  } 
+
+app.listen(PORT, () => {
+  console.log(`🔥 Backend running on port ${PORT}`);
 });
+  }
+  });
+  
