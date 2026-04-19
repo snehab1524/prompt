@@ -72,35 +72,38 @@ db.query("SELECT *, COALESCE(role, 'user') as role FROM user_register WHERE emai
       const user = rows[0];
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });
-const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
-      db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, purchaseRows) => {
-        const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
-        const courseData = purchaseRows[0] || null;
-        db.query("SELECT * FROM user_progress WHERE email = ?", [email], (err, progressRows) => {
-          let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };
-          if (progressRows && progressRows.length > 0) {
-            const row = progressRows[0];
-            progress = {
-              completedLevels: typeof row.completedLevels === "string" ? JSON.parse(row.completedLevels) : row.completedLevels || [],
-              currentLevelId: row.currentLevelId || "beginner",
-              certifications: typeof row.certifications === "string" ? JSON.parse(row.certifications) : row.certifications || []
-            };
-          }
-          res.json({
-            success: true,
-            token,
-            user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
-            purchased,
-            progress,
-            payment_verified: courseData?.payment_verified || "NO Payment",
-            courseName: courseData?.courseName || null,
-            selectedDomain: courseData?.selected_domain || null,
-            courseexpairy: courseData?.courseexpairy || null,
-            duration: courseData?.duration || null,
-            phone: courseData?.phone || null,
-            citizen: courseData?.citizen || null
-          });
-        });
+      const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
+
+      // Parallel queries - optimization
+      const purchaseQuery = new Promise((resolve, reject) => db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, rows) => err ? reject(err) : resolve(rows)));
+      const progressQuery = new Promise((resolve, reject) => db.query("SELECT * FROM user_progress WHERE email = ?", [email], (err, rows) => err ? reject(err) : resolve(rows)));
+
+      const [purchaseRows, progressRows] = await Promise.all([purchaseQuery, progressQuery]);
+      const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
+      const courseData = purchaseRows[0] || null;
+      
+      let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };
+      if (progressRows && progressRows.length > 0) {
+        const row = progressRows[0];
+        progress = {
+          completedLevels: safeParse(row.completedLevels),
+          currentLevelId: row.currentLevelId || "beginner",
+          certifications: safeParse(row.certifications)
+        };
+      }
+      res.json({
+        success: true,
+        token,
+        user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
+        purchased,
+        progress,
+        payment_verified: courseData?.payment_verified || "NO Payment",
+        courseName: courseData?.courseName || null,
+        selectedDomain: courseData?.selected_domain || null,
+        courseexpairy: courseData?.courseexpairy || null,
+        duration: courseData?.duration || null,
+        phone: courseData?.phone || null,
+        citizen: courseData?.citizen || null
       });
     });
   } catch (err) {
@@ -108,6 +111,7 @@ const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, 
     res.status(500).json({ success: false });
   }
 });
+
 
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
