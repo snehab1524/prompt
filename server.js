@@ -66,45 +66,61 @@ app.post("/signup", async (req, res) => {
 app.post("/user-login", async (req, res) => {
   try {
     const { email, password } = req.body;
-db.query("SELECT *, COALESCE(role, 'user') as role FROM user_register WHERE email=?", [email], async (err, rows) => {
-      if (err) return res.status(500).json({ success: false });
-      if (rows.length === 0) return res.status(401).json({ success: false, message: "User not found" });
-      const user = rows[0];
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });
-      const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
 
-      // Parallel queries - optimization
-      const purchaseQuery = new Promise((resolve, reject) => db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, rows) => err ? reject(err) : resolve(rows)));
-      const progressQuery = new Promise((resolve, reject) => db.query("SELECT * FROM user_progress WHERE email = ?", [email], (err, rows) => err ? reject(err) : resolve(rows)));
-
-      const [purchaseRows, progressRows] = await Promise.all([purchaseQuery, progressQuery]);
-      const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
-      const courseData = purchaseRows[0] || null;
-      
-      let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };
-      if (progressRows && progressRows.length > 0) {
-        const row = progressRows[0];
-        progress = {
-          completedLevels: safeParse(row.completedLevels),
-          currentLevelId: row.currentLevelId || "beginner",
-          certifications: safeParse(row.certifications)
-        };
-      }
-      res.json({
-        success: true,
-        token,
-        user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
-        purchased,
-        progress,
-        payment_verified: courseData?.payment_verified || "NO Payment",
-        courseName: courseData?.courseName || null,
-        selectedDomain: courseData?.selected_domain || null,
-        courseexpairy: courseData?.courseexpairy || null,
-        duration: courseData?.duration || null,
-        phone: courseData?.phone || null,
-        citizen: courseData?.citizen || null
+    // Parallelize ALL queries: user auth + purchase + progress
+    const authQuery = new Promise((resolve, reject) => {
+      db.query("SELECT *, COALESCE(role, 'user') as role FROM user_register WHERE email=?", [email], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
       });
+    });
+
+    const purchaseQuery = new Promise((resolve, reject) => db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, rows) => err ? reject(err) : resolve(rows)));
+    const progressQuery = new Promise((resolve, reject) => db.query("SELECT * FROM user_progress WHERE email = ?", [email], (err, rows) => err ? reject(err) : resolve(rows)));
+
+    const [authResult, purchaseResult, progressResult] = await Promise.allSettled([authQuery, purchaseQuery, progressQuery]);
+
+    // Handle auth first (critical path)
+    if (authResult.status === 'rejected') return res.status(500).json({ success: false });
+    const rows = authResult.value;
+    if (rows.length === 0) return res.status(401).json({ success: false, message: "User not found" });
+    const user = rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });
+
+    const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
+
+    // Extract purchase/progress data safely
+    let purchaseRows = [], progressRows = [];
+    if (purchaseResult.status === 'fulfilled') purchaseRows = purchaseResult.value;
+    if (progressResult.status === 'fulfilled') progressRows = progressResult.value;
+
+    const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
+    const courseData = purchaseRows[0] || null;
+    
+    let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };
+    if (progressRows && progressRows.length > 0) {
+      const row = progressRows[0];
+      progress = {
+        completedLevels: safeParse(row.completedLevels),
+        currentLevelId: row.currentLevelId || "beginner",
+        certifications: safeParse(row.certifications)
+      };
+    }
+
+    res.json({
+      success: true,
+      token,
+      user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
+      purchased,
+      progress,
+      payment_verified: courseData?.payment_verified || "NO Payment",
+      courseName: courseData?.courseName || null,
+      selectedDomain: courseData?.selected_domain || null,
+      courseexpairy: courseData?.courseexpairy || null,
+      duration: courseData?.duration || null,
+      phone: courseData?.phone || null,
+      citizen: courseData?.citizen || null
     });
   } catch (err) {
     console.error(err);
