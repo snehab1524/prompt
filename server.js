@@ -4,7 +4,6 @@ const cors = require("cors");
 const Razorpay = require("razorpay");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
-const PORT = process.env.PORT || 7000;
 
 const usermodel = require("./model")
 const userprogress = require("./userprogressmodel");
@@ -67,9 +66,48 @@ app.post("/signup", async (req, res) => {
 app.post("/user-login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    // OPTIMIZATION 1: Select only needed fields (uses email index)\n    const [rows] = await dbQuery("SELECT userid, full_name, email, password, COALESCE(role, 'user') as role FROM user_register WHERE email=?", [email]);\n    if (rows.length === 0) return res.status(401).json({ success: false, message: "User not found" });\n    const user = rows[0];\n    const isMatch = await bcrypt.compare(password, user.password);\n    if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });\n    const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });\n    // OPTIMIZATION 3: Parallel queries for users + progress (reduces latency 3x)\n    const [purchaseRows, progressRows] = await Promise.all([\n      dbQuery("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email]),\n      dbQuery("SELECT completedLevels, currentLevelId, certifications FROM user_progress WHERE email = ?", [email])\n    ]);\n    const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";\n    const courseData = purchaseRows[0] || null;\n    let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };\n    if (progressRows && progressRows.length > 0) {\n      const row = progressRows[0];\n      progress = {\n        completedLevels: typeof row.completedLevels === "string" ? JSON.parse(row.completedLevels) : row.completedLevels || [],\n        currentLevelId: row.currentLevelId || "beginner",\n        certifications: typeof row.certifications === "string" ? JSON.parse(row.certifications) : row.certifications || []\n      };\n    }\n    res.json({\n      success: true,\n      token,\n      user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },\n      purchased,\n      progress,\n      payment_verified: courseData?.payment_verified || "NO Payment",\n      courseName: courseData?.courseName || null,\n      selectedDomain: courseData?.selected_domain || null,\n      courseexpairy: courseData?.courseexpairy || null,\n      duration: courseData?.duration || null,\n      phone: courseData?.phone || null,\n      citizen: courseData?.citizen || null\n    });
+db.query("SELECT *, COALESCE(role, 'user') as role FROM user_register WHERE email=?", [email], async (err, rows) => {
+      if (err) return res.status(500).json({ success: false });
+      if (rows.length === 0) return res.status(401).json({ success: false, message: "User not found" });
+      const user = rows[0];
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(401).json({ success: false, message: "Wrong password" });
+const token = jwt.sign({ id: user.userid, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1d" });
+      db.query("SELECT payment_verified, courseName, selected_domain, courseexpairy,duration,phone,citizen FROM users WHERE email=? ORDER BY created_at DESC LIMIT 1", [email], (err, purchaseRows) => {
+        const purchased = purchaseRows.length > 0 && purchaseRows[0].payment_verified === "Payment Done";
+        const courseData = purchaseRows[0] || null;
+        db.query("SELECT * FROM user_progress WHERE email = ?", [email], (err, progressRows) => {
+          let progress = { completedLevels: [], currentLevelId: "beginner", certifications: [] };
+          if (progressRows && progressRows.length > 0) {
+            const row = progressRows[0];
+            progress = {
+              completedLevels: typeof row.completedLevels === "string" ? JSON.parse(row.completedLevels) : row.completedLevels || [],
+              currentLevelId: row.currentLevelId || "beginner",
+              certifications: typeof row.certifications === "string" ? JSON.parse(row.certifications) : row.certifications || []
+            };
+          }
+          res.json({
+            success: true,
+            token,
+            user: { id: user.userid, fullName: user.full_name, email: user.email, role: user.role },
+            purchased,
+            progress,
+            payment_verified: courseData?.payment_verified || "NO Payment",
+            courseName: courseData?.courseName || null,
+            selectedDomain: courseData?.selected_domain || null,
+            courseexpairy: courseData?.courseexpairy || null,
+            duration: courseData?.duration || null,
+            phone: courseData?.phone || null,
+            citizen: courseData?.citizen || null
+          });
+        });
+      });
+    });
   } catch (err) {
-    // OPTIMIZATION 2: Removed console.error from hot path\n    res.status(500).json({ success: false });\n  }\n});
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
 
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
@@ -720,11 +758,5 @@ const seedCourses = () => {
 };
 seedCourses();
 
+app.listen(7000, () => console.log("🔥 Backend running on port 7000 🔥"));
 
-
-app.listen(PORT, () => {
-  console.log(`🔥 Backend running on port ${PORT}`);
-});
-  }
-  });
-  
