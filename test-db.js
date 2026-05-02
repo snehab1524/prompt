@@ -1,22 +1,30 @@
 const mysql = require("mysql2");
-const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,//"localhost",
-  user: process.env.DB_USER,//"root",
-  password: process.env.DB_PASSWORD,//"Mahima@24",
-  database: "cert_db",
-  port: process.env.DB_PORT || 3306
+// ❌ REMOVE dotenv for production (Render doesn't use .env file)
+// require("dotenv").config();
+
+const db = mysql.createPool({
+  host: process.env.MYSQLHOST,        // Railway variable
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE,
+  port: process.env.MYSQLPORT,
+
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  connectTimeout: 10000
 });
 
-db.connect((err) => {
+// Test connection (safe)
+db.getConnection((err, connection) => {
   if (err) {
-    console.log("DB connection failed ❌");
-    console.log(err);
-    return;
+    console.log("❌ DB connection failed:");
+    console.log(err.message);
+  } else {
+    console.log("✅ MySQL Connected");
+    connection.release();
   }
-  console.log("MySQL Connected ✅");
 });
-module.exports=db;
 
+module.exports = db.promise();
