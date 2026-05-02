@@ -2,7 +2,7 @@ const db = require("./test-db");
 
 /* ========= CREATE TABLE ========= */
 
-const createVideoTable = () => {
+const createVideoTable = async () => {
   const sql = `
     CREATE TABLE IF NOT EXISTS videos (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -11,37 +11,30 @@ const createVideoTable = () => {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `;
-db.query(sql, (err) => {
-    if (err) {
-      console.log("Table creation error ❌", err);
-    } else {
-      console.log("Users table ready ✅");
-    }
-  });
+
+  try {
+    await db.query(sql);
+    console.log("Users table ready âœ…");
+  } catch (err) {
+    console.log("Table creation error âŒ", err);
+  }
 };
 
 /* ========= INSERT USER ========= */
 
-const storeVideo = (videoData) => {
-  return new Promise((resolve, reject) => {
-    const sql = `
-      INSERT INTO videos (Title, video)
-      VALUES (?, ?)
-    `;
+const storeVideo = async (videoData) => {
+  const sql = `
+    INSERT INTO videos (Title, video)
+    VALUES (?, ?)
+  `;
 
-    db.query(
-      sql,
-      [videoData.title, videoData.video],
-      (err, result) => {
-        if (err) {
-          console.log("Video insert error ❌", err);
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      }
-    );
-  });
+  try {
+    const [result] = await db.query(sql, [videoData.title, videoData.video]);
+    return result;
+  } catch (err) {
+    console.log("Video insert error âŒ", err);
+    throw err;
+  }
 };
 
-module.exports={createVideoTable,storeVideo}
+module.exports = { createVideoTable, storeVideo };

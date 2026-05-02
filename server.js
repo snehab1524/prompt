@@ -45,11 +45,10 @@ const safeParse = (value, fallback = []) => {
   }
 };
 
-/** Wrap a db.query (callback-style) into a Promise */
-const dbQuery = (sql, params = []) =>
-  new Promise((resolve, reject) =>
-    db.query(sql, params, (err, result) => (err ? reject(err) : resolve(result)))
-  );
+const dbQuery = async (sql, params = []) => {
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
 
 // ─── DB init (sequential, safe) ────────────────────────────────────────────────
 (async () => {
@@ -419,16 +418,16 @@ app.post("/verify-domain-payment", async (req, res) => {
 });
 
 // ─── Progress Routes ────────────────────────────────────────────────────────────
-app.post("/save-progress", verifyToken, (req, res) => {
-  const email = req.user.email;
-  const incoming = {
-    currentLevelId: req.body.currentLevelId,
-    completedLevels: req.body.completedLevels || [],
-    certifications: req.body.certifications || [],
-  };
+app.post("/save-progress", verifyToken, async (req, res) => {
+  try {
+    const email = req.user.email;
+    const incoming = {
+      currentLevelId: req.body.currentLevelId,
+      completedLevels: req.body.completedLevels || [],
+      certifications: req.body.certifications || [],
+    };
 
-  userprogress.getProgress(email, (err, result) => {
-    if (err) return res.status(500).json({ success: false, error: err.message });
+    const result = await userprogress.getProgress(email);
 
     let old = { currentLevelId: null, completedLevels: [], certifications: [] };
     if (result.length > 0) {
@@ -441,30 +440,33 @@ app.post("/save-progress", verifyToken, (req, res) => {
     [...(old.certifications || []), ...(incoming.certifications || [])].forEach(c => { if (c?.id) certMap[c.id] = c; });
     const mergedCerts = Object.values(certMap);
 
-    userprogress.saveProgress(email, {
+    await userprogress.saveProgress(email, {
       currentLevelId: incoming.currentLevelId || old.currentLevelId,
       completedLevels: mergedLevels,
       certifications: mergedCerts,
       learnerName: req.body.learnerName,
-    }, (saveErr) => {
-      if (saveErr) return res.status(500).json({ success: false, error: saveErr.message });
-      res.json({ success: true, progress: { currentLevelId: incoming.currentLevelId || old.currentLevelId, completedLevels: mergedLevels, certifications: mergedCerts } });
     });
-  });
+
+    res.json({ success: true, progress: { currentLevelId: incoming.currentLevelId || old.currentLevelId, completedLevels: mergedLevels, certifications: mergedCerts } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-app.post("/get-progress", verifyToken, (req, res) => {
-  userprogress.getProgress(req.user.email, (err, result) => {
-    if (err) return res.status(500).json({ error: "DB error" });
+app.post("/get-progress", verifyToken, async (req, res) => {
+  try {
+    const result = await userprogress.getProgress(req.user.email);
     if (!result.length) return res.json({ completedLevels: [], currentLevelId: null, certifications: [] });
     const data = result[0];
     res.json({ completedLevels: safeParse(data.completedLevels), currentLevelId: data.currentLevelId, certifications: safeParse(data.certifications) });
-  });
+  } catch (err) {
+    res.status(500).json({ error: "DB error" });
+  }
 });
 
-app.get("/check-unlocks", verifyToken, (req, res) => {
-  userprogress.getProgress(req.user.email, (err, rows) => {
-    if (err) return res.status(500).json({ error: "DB error" });
+app.get("/check-unlocks", verifyToken, async (req, res) => {
+  try {
+    const rows = await userprogress.getProgress(req.user.email);
     const completed = safeParse(rows[0]?.completedLevels, []);
     const beginnerDone = completed.includes("beginner");
     const domains = ["content-writing", "marketing", "coding", "data-analysis", "education", "business", "fashion", "health"];
@@ -476,49 +478,50 @@ app.get("/check-unlocks", verifyToken, (req, res) => {
         advanced: domains.reduce((acc, d) => ({ ...acc, ["advanced-" + d]: completed.includes(d) }), {}),
       },
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: "DB error" });
+  }
 });
 
-// ─── Certificate Routes ─────────────────────────────────────────────────────────
-app.post("/generate-certificate", verifyToken, (req, res) => {
+app.post("/generate-certificate", verifyToken, async (req, res) => {
   const { certificateId, name, course } = req.body;
   const email = req.user.email;
   if (!certificateId || !name || !course) return res.status(400).json({ error: "Missing required fields" });
 
   const certString = course.includes("Certificate") ? course : `${course} Certificate`;
 
-  userprogress.getProgress(email, (err, result) => {
-    if (err) return res.status(500).json({ error: "Progress fetch error" });
+  try {
+    const result = await userprogress.getProgress(email);
 
     let existingCerts = result.length > 0 ? safeParse(result[0].certifications || "[]") : [];
     if (existingCerts.some(c => c === certString || (typeof c === "string" && c.toLowerCase() === certString.toLowerCase()))) {
       return res.json({ success: true, message: "Certificate already exists" });
     }
 
-    userprogress.saveProgress(email, { certifications: [...existingCerts, certString] }, (saveErr) => {
-      if (saveErr) return res.status(500).json({ error: "Progress save failed" });
-      res.json({ success: true, message: "Certificate saved ✅" });
-    });
-  });
+    await userprogress.saveProgress(email, { certifications: [...existingCerts, certString] });
+    res.json({ success: true, message: "Certificate saved ✅" });
+  } catch (err) {
+    res.status(500).json({ error: "Progress fetch error" });
+  }
 });
 
-app.post("/update-certificate-name", verifyToken, (req, res) => {
+app.post("/update-certificate-name", verifyToken, async (req, res) => {
   const { certId, newName } = req.body;
   if (!certId || !newName) return res.status(400).json({ error: "Missing data" });
 
-  userprogress.getProgress(req.user.email, (err, result) => {
-    if (err) return res.status(500).json({ error: "Database error" });
+  try {
+    const result = await userprogress.getProgress(req.user.email);
     if (!result.length) return res.status(404).json({ error: "User progress not found" });
 
     const updated = safeParse(result[0].certifications || "[]").map(c =>
       (c.id === certId || c.certId === certId) ? { ...c, learnerName: newName } : c
     );
 
-    userprogress.saveProgress(req.user.email, { certifications: updated }, (saveErr) => {
-      if (saveErr) return res.status(500).json({ error: "Database error" });
-      res.json({ success: true, message: "Certificate updated" });
-    });
-  });
+    await userprogress.saveProgress(req.user.email, { certifications: updated });
+    res.json({ success: true, message: "Certificate updated" });
+  } catch (err) {
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 app.get("/verify", (req, res) => {

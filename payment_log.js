@@ -1,6 +1,6 @@
 const db = require("./test-db");
 
-const createPaymentdataTable = () => {
+const createPaymentdataTable = async () => {
 
     const sql=
     `CREATE TABLE IF NOT EXISTS payment_logs (
@@ -13,26 +13,26 @@ const createPaymentdataTable = () => {
   payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
     `
-    db.query(sql, (err) => {
-    if (err) {
-      console.log("Table creation error ❌", err);
-    } else {
-      console.log("Users table ready ✅");
+    try {
+      await db.query(sql);
+      console.log("Users table ready âœ…");
+    } catch (err) {
+      console.log("Table creation error âŒ", err);
     }
-  });
 }
-const createpaymentdatabase = (userData) => {
-db.query(
-  `INSERT INTO payment_logs 
+const createpaymentdatabase = async (userData) => {
+  await db.query(
+    `INSERT INTO payment_logs 
    (email, courseName, razorpay_payment_id, razorpay_order_id, amount)
    VALUES (?, ?, ?, ?, ?)`,
-  [
-    userData.email || "unknown",
-    userData.courseName,
-    userData.razorpay_payment_id,
-    userData.razorpay_order_id,
-    userData.amountResult
-  ]
-);}
+    [
+      userData.email || "unknown",
+      userData.courseName,
+      userData.razorpay_payment_id,
+      userData.razorpay_order_id,
+      userData.amountResult
+    ]
+  );
+}
 
 module.exports={createPaymentdataTable,createpaymentdatabase }
