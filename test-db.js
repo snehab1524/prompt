@@ -1,7 +1,5 @@
 const mysql = require("mysql2");
 
-// ❌ REMOVE dotenv for production (Render doesn't use .env file)
-// require("dotenv").config();
 
 const db = mysql.createPool({
   host: process.env.MYSQLHOST,        // Railway variable
